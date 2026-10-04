@@ -92,7 +92,7 @@ export default async () => {
       const price = (b.match(/<ItemPrice>([^<]*)</i) || [])[1];
       return `${(name || "?").trim()} - ${price || "?"}`;
     });
-    step("parse", { format, encoding, unpackedKb: Math.round(data.length / 1024), items, sample,
+    step("parse", { version: 3, format, encoding, unpackedKb: Math.round(data.length / 1024), items, sample,
       preview: text.slice(0, 400) });
 
     return json({ ok: true, totalMs: Date.now() - t0, steps });
