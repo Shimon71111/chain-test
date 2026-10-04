@@ -87,8 +87,7 @@ export default async () => {
 
     const { format, data } = unpack(buf);
     const { encoding, text } = decode(data);
-    const items = (text.match(/<Item>/gi) || []).length;
-    const sample = [...text.matchAll(/<ItemName>([^<]*)<\/ItemName>[\s\S]*?<ItemPrice>([^<]*)<\/ItemPrice>/gi)]
+    const sample = [...text.matchAll(/<ItemNa?me?>([^<]*)<\/ItemNa?me?>[\s\S]*?<ItemPrice>([^<]*)<\/ItemPrice>/gi)]    const sample = [...text.matchAll(/<ItemName>([^<]*)<\/ItemName>[\s\S]*?<ItemPrice>([^<]*)<\/ItemPrice>/gi)]
       .slice(0, 5).map((m) => `${m[1].trim()} - ${m[2]}`);
     step("parse", { format, encoding, unpackedKb: Math.round(data.length / 1024), items, sample,
       preview: text.slice(0, 400) });
