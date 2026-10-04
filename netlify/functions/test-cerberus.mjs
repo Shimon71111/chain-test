@@ -1,4 +1,4 @@
-import { gunzipSync } from "node:zlib";
+import { gunzipSync, inflateRawSync } from "node:zlib";
 
 const BASE = "https://url.publishedprices.co.il";
 const USER = "RamiLevi";
@@ -29,6 +29,24 @@ const getToken = (html) => (html.match(/name="csrftoken"\s+content="([^"]+)"/) |
 const form = { "Content-Type": "application/x-www-form-urlencoded" };
 const json = (o) => new Response(JSON.stringify(o, null, 2),
   { headers: { "content-type": "application/json; charset=utf-8" } });
+const hex = (b) => [...b.subarray(0, 8)].map((x) => x.toString(16).padStart(2, "0")).join(" ");
+
+function unpack(buf) {
+  if (buf[0] === 0x1f && buf[1] === 0x8b) return { format: "gzip", data: gunzipSync(buf) };
+  if (buf[0] === 0x50 && buf[1] === 0x4b) {
+    const method = buf.readUInt16LE(8);
+    const start = 30 + buf.readUInt16LE(26) + buf.readUInt16LE(28);
+    const body = buf.subarray(start);
+    return { format: "zip", data: method === 8 ? inflateRawSync(body, { finishFlush: 2 }) : body };
+  }
+  return { format: "plain", data: buf };
+}
+
+function decode(data) {
+  if (data[0] === 0xff && data[1] === 0xfe) return { encoding: "utf16le-bom", text: data.toString("utf16le") };
+  if (data[1] === 0x00) return { encoding: "utf16le", text: data.toString("utf16le") };
+  return { encoding: "utf8", text: data.toString("utf8") };
+}
 
 export default async () => {
   jar.clear();
@@ -45,11 +63,10 @@ export default async () => {
       method: "POST", headers: form,
       body: new URLSearchParams({ r: "", username: USER, password: "", Submit: "Sign in", csrftoken: token || "" }),
     });
-    step("login", { status: login.status, redirect: login.headers.get("location") });
+    step("login", { status: login.status });
 
     html = await (await req("/file")).text();
     token = getToken(html) || token;
-    step("file page", { gotToken: !!token });
 
     const dirRes = await req("/file/json/dir", {
       method: "POST", headers: form,
@@ -59,25 +76,22 @@ export default async () => {
         iSortingCols: "0", cd: "/", csrftoken: token || "",
       }),
     });
-    const dirText = await dirRes.text();
-    let dir;
-    try { dir = JSON.parse(dirText); }
-    catch { throw new Error("file list not JSON: " + dirText.slice(0, 150)); }
-
+    const dir = JSON.parse(await dirRes.text());
     const files = (dir.aaData || []).map((f) => f.fname).filter((n) => /^PriceFull/i.test(n)).sort();
-    step("file list", { priceFullFiles: files.length, sample: files.slice(-3) });
-    if (!files.length) throw new Error("no PriceFull files found");
+    step("file list", { priceFullFiles: files.length });
 
     const fname = files.at(-1);
     const fileRes = await req("/file/d/" + fname);
     const buf = Buffer.from(await fileRes.arrayBuffer());
-    step("download", { fname, status: fileRes.status, kb: Math.round(buf.length / 1024) });
+    step("download", { fname, status: fileRes.status, kb: Math.round(buf.length / 1024), firstBytes: hex(buf) });
 
-    const xml = (buf[0] === 0x1f && buf[1] === 0x8b ? gunzipSync(buf) : buf).toString("utf8");
-    const items = (xml.match(/<Item>/gi) || []).length;
-    const sample = [...xml.matchAll(/<ItemName>([^<]*)<\/ItemName>[\s\S]*?<ItemPrice>([^<]*)<\/ItemPrice>/gi)]
+    const { format, data } = unpack(buf);
+    const { encoding, text } = decode(data);
+    const items = (text.match(/<Item>/gi) || []).length;
+    const sample = [...text.matchAll(/<ItemName>([^<]*)<\/ItemName>[\s\S]*?<ItemPrice>([^<]*)<\/ItemPrice>/gi)]
       .slice(0, 5).map((m) => `${m[1].trim()} - ${m[2]}`);
-    step("parse", { items, sample });
+    step("parse", { format, encoding, unpackedKb: Math.round(data.length / 1024), items, sample,
+      preview: text.slice(0, 400) });
 
     return json({ ok: true, totalMs: Date.now() - t0, steps });
   } catch (e) {
